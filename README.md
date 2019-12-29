@@ -15,4 +15,9 @@ Assignments for the 2nd part of UT MSBA's Supply Chain Analytics course, demand 
 
  - Assignment #3:
  
+     Forecasting the demand of a product where demand is relatively stable - Peanut Butter. (Thank you O merciful GG) Goal is to embed a log-log demand model in an ARIMA model that accounts for the auto-correlation of the sales data.
+     
+     
+ - Assignment #4:
  
+     Develop a forecasting model to be used for distribution and retailing in the Chicago market. (Again for peanut butter) Goal is to forecast Point-of-sale SKU demand using XG-boosting.
