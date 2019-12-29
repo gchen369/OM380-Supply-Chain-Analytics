@@ -1,7 +1,7 @@
 ## OM380 Supply Chain Analytics
   Operations management & Demand forecasting assignments
 
-Assignments for the 2nd part of UT MSBA's Supply Chain Analytics course, demand forecasting using R:
+Assignments for the 2nd part of UT MSBA's Supply Chain Analytics course, time series models with R:
 
  - **Assignment #1:**
  
