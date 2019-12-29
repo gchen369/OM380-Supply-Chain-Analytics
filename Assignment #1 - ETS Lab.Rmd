@@ -1,0 +1,414 @@
+---
+title: 'Assignment #1'
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  html_notebook: default
+  word_document: default
+---  
+***
+<center>
+### ETS Laboratory
+#### (40 points)
+#### Due: Nov. 6 (before 9:00am)
+</center>
+***
+
+In this assignment we will focus on longer term forecast as it is appropriate for aggregate planning and/or facilities planning.
+
+We are interested in obtaining a 5 year forecast (60 months to be precise) of the size of the grocery store market in the US, and we want that forecast in monthly (not weekly) intervals.  Such a forecast is useful if you are preparing an infrastructure plan for a grocery store chain for example: this type of forecast is useful to make decisions about number of new stores to open, number of distribution centers and their capacity, personnel and other infrastructure decisions.
+
+The data set "**MRTSSM4451USN.csv**" includes monthly retail sales of grocery stores in the US from January 1992 through December 2017 expressed in millions of US dollars.  
+Source: https://fred.stlouisfed.org/series/MRTSSM4451USN
+
+The first thing we need to do is load the data file and convert it into an appropriate time-series object.  This is accomplished with the following code:
+
+```{r, message=FALSE, warning=FALSE}
+library(fpp2)
+library(dplyr)
+#
+# Read csv file and make it a time series
+GS <- read.csv("MRTSSM4451USN.csv") %>%
+  select(-DATE) %>%
+  ts(start= c(1992,1), frequency=12) 
+```
+
+In this assignment we will learn to use the **ets(…)** function to fit and analyze exponential smoothing models.  Before proceeding to fit a model we examine and divide the data into two sets; a training set **tr** that we will use to fit the models and a testing (or hold-out) data set **te** to assess the out-of-sample performance of the models.  This is accomplished with the following code:
+
+```{r}
+tr <- window(GS, end=c(2011,12))
+te <- window(GS, start=c(2012,1))
+
+autoplot(GS) +
+  geom_vline(xintercept=2012.0, color="gray") +
+  ggtitle("Monthly Sales of US Grocery Stores")
+
+```
+
+1.	(5 pts.) Holt-Winters Model Analysis: part I:  
+
+* 	Use the **ets(…)** function to fit a Holt-Winters exponential smoothing model with additive errors to the training sales data.  Leave it up to the **ets(…)** function to decide if a damping parameter is necessary (i.e., do not specify the damped directive.  Name this model **f.HW**, and report the model details including the optimized value of each of the constants and smoothing parameters required by the model, the *AIC*, *AICc* and *BIC* values, as well as the in-sample fitting indicators. 
+
+```{r}
+f.HW <- ets(tr, model = "AAZ")
+summary(f.HW)
+```
+
+
+*	Use the **forecast(…)** function to obtain a **72-month-ahead** forecast (i.e., forecast the entire testing or hold-out dataset), name this forecast **fc.HW** and plot it (i.e. call the **autoplot(fc.HW)** function); overlay on this plot the actual sales observed during this testing period (i.e. call the function **+ autolayer(te, series = "Actual Sales")**  to overlay the testing set data).
+
+```{r}
+fc.HW <- f.HW %>% forecast(h=72)
+
+fc.HW %>%
+  autoplot() +
+  autolayer(te, series = "Actual Sales")
+```
+
+
+*	In this plot it is difficult to appreciate the gap between actuals and forecasts; next we reproduce the plot again, but now zooming on the forecasting period.  To do this, include the **xlim** and **ylim** parameters in the **autoplot(...)** call (i.e., call **+ xlim(2009,2018)**) to focus the plot on the forecast period). Please include the above value for the **xlim** parameter in every forecast plot in Questions 1 through 
+
+```{r}
+fc.HW %>%
+  autoplot() + 
+  xlim(2009,2018) +
+  autolayer(te, series="Actual Sales")
+```
+
+
+*	 Calculate the *in-sample* and *out-of-sample* fit statistics.  You can obtain the in-sample and out-of-sample fit metrics comparison by calling the function **accuracy(fc.HW, te)**  
+
+```{r}
+accuracy(fc.HW, te)
+```
+
+
+	Based on your analysis above, discuss the forecast bias and compare the in-sample and out-of-sample *MASE*.  What do you think is driving the poor model performance?  Which model/method, **f.HW** or **naive**,  would you choose for forecasting?
+	
+```{r}
+fc.naive <- naive(tr, h=72)
+accuracy(fc.naive, te)
+```
+
+<span style="color:blue">
+For part 1, our model underestimates the model by a large margin, which grows worse as time goes on. This is shown in the much larger out-of-sample MASE. I think the damping factor is causing the model to perform poorly, because the trend does not seem to level off for retail sales. In this case, I would choose the naive method over the HW method, because of the lower out-of-sample MASE.
+</span>
+
+
+2. (5 pts.) Holt-Winters Model Analysis: part II:  
+
+*	Optimize the parameters of a Holt-Winters model disallowing damping of growth (i.e., use the **damped = FALSE** directive in the call to the **ets(…)** function). Call the fitted model **f.HW2**, and report the model details including the optimized value of each of the constants and smoothing parameters required by the model, the *AIC, AICc* and *BIC* values, as well as the in-sample fitting indicators.
+
+```{r}
+f.HW2 <- ets(tr, model = "AAZ", damped = FALSE)
+summary(f.HW2)
+```
+
+
+*	Obtain a 72-month-ahead forecast, name this forecast **fc.HW2** and plot it.
+
+```{r}
+fc.HW2 <- f.HW2 %>% forecast(h=72)
+
+fc.HW2 %>%
+  autoplot() +
+  xlim(2009,2018) +
+  autolayer(te, series="Actual Sales")
+```
+
+
+*	Calculate the *in-sample* and *out-of-sample* fit statistics of the **fc.HW2** forecast.
+
+```{r}
+accuracy(fc.HW2, te)
+```
+
+
+*	As in Question (1), compare the out-of-sample metrics of **fc.HW** and **fc.HW2**.  Discuss also the confidence interval cone of both models, and their implications for operations planning.  
+
+<span style="color:blue">
+Out-of-sample MASE is much lower after disallowing damping. The confidence interval cone is also narrower for fc.HW2. This way, our grocery store chain can set up its capacity expansion/ infruastructure construction/ personnel hiring plans with higher certainties.
+</span>
+
+
+3.	(5 pts) Optimal ETS Model Selection:
+
+*	Now we call the **ets(…)** function using the **model=”ZZZ”** directive to optimize the model selection including multiplicative models (i.e., set the **restrict=FALSE** option). Call the fitted model **f.O**, and report the model details, the *AIC, AICc* and *BIC* values, as well as the in-sample fitting indicators.
+
+```{r}
+f.0 <- ets(tr, model="ZZZ", restrict=FALSE)
+summary(f.0)
+```
+
+
+*	Obtain a 72-month-ahead forecast, name this forecast **fc.O** and plot it.
+
+```{r}
+fc.0 <- f.0 %>% forecast(h=72)
+
+fc.0 %>%
+  autoplot() + 
+  xlim(2009,2018) +
+  autolayer(te, series="Actual Sales")
+      
+```
+
+
+*	Calculate the *in-sample* and *out-of-sample* fit statistics of the **fc.O** forecast. 
+
+```{r}
+accuracy(fc.0, te)
+```
+
+
+*	Compare the out-of-sample accuracy metrics of **fc.HW**, **fc.HW2** and **fc.O**.  Compare the *AIC AICc* and *BIC* of models **f.HW**, **f.HW2** and **f.O**. Which model/method would you choose for forecasting?
+
+<span style="color:blue">
+In our case, the out-of-sample MASE gives a different model selection recommendation when compared to AIC/AICc/BIC. (MASE chooses HW2, AIC chooses 0) For this particular case, I would choose HW2 as our main model, because when we visualized our data in Q1, the amplitude of the seasonal effects seem to be the same each year instead of expanding as time goes on.
+</span>
+
+
+
+4.	(5 pts) Optimized model using BoxCox-Transformed Data:
+
+*	Select the best value of the “*lambda*” parameter for the BoxCox transformation over the training set **tr**, and then use the **ets(…)** function to optimize the model selection as you did in Question (3). Call the fitted model **fB.O**, and report the model details, the *AIC, AICc* and *BIC* values, as well as the in-sample fitting indicators.
+
+```{r}
+L <- BoxCox.lambda(tr)
+
+fB.0 <- ets(tr, model="ZZZ", restrict=FALSE, lambda=L)
+
+summary(fB.0)
+```
+
+
+*	Obtain a 72-month-ahead forecast, name this forecast **fBc.O** and plot it.
+
+```{r}
+fBc.0 <- fB.0 %>% forecast(h=72)
+
+fBc.0 %>% 
+  autoplot() +
+  xlim(2009, 2018) +
+  autolayer(te, series="Actual Sales")
+```
+
+
+*	Calculate the in-sample and out-of-sample fit statistics of the **fBc.O** forecast. 
+
+```{r}
+accuracy(fBc.0, te)
+```
+
+
+*	Compare the in-sample and out-of-sample accuracy metrics of **fBc.O** and **fc.O**.   Which model/method would you choose for forecasting?  Why?
+
+<span style="color:blue">
+Using the in-sample accuracy metrics AIC/AICc/BIC would not be suitable because the transformation distorts these ratios. Using the out-of-sample accuracy metric MASE, I choose fc.0 for forecasting.
+</span>
+
+5.	(5 pts) Optimized model with damping using BoxCox-Transformed Data:
+
+*	Using the best value of “*lambda*” (i.e., the same you used in Question (4)), and set **damped=TRUE** in the **ets(…)** function.  Name the fitted model **fB.OD** and report the model details and metrics.  
+
+```{r}
+fB.0D <- ets(tr, model="ZZZ", restrict=FALSE, lambda=L, damped=TRUE)
+
+summary(fB.0D)
+```
+
+
+* Now use the **forecast(…)** function to obtain a 72-month-ahead forecast, name this forecast **fBc.OD** and plot it.  
+
+```{r}
+fBc.0D <- fB.0D %>% forecast(h=72)
+
+fBc.0D %>%
+  autoplot() +
+  xlim(2009, 2018) +
+  autolayer(te, series="Actual Sales")
+```
+
+
+*	Use the function **accuracy(…)** to calculate the in-sample and out-of-sample fit statistics of the **fBc.OD** forecast. 
+
+```{r}
+accuracy(fBc.0D, te)
+```
+
+
+*	Compare the in-sample and out-of-sample accuracy metrics of **fBc.OD**, **fBc.O** and **fc.O**.   Which model/method would you choose for forecasting? Why?
+
+<span style="color:blue">
+Fore forecasting purposes I would choose fc.0, because it has the best out-of-sample performance.
+</span>
+
+
+6.	(5 pts) In an effort to improve forecasts, in this question we want to assess the value of old information and discard the oldest segment of the information that does not have predictive value.  To this end code and execute the following:
+
+Evaluate the selection of a moving training set starting from 1992, 1993, etc all the way to starting in 2006, but in each case keep the end of the training set fixed at December of 2011.  For each starting year:
+
+* Select the value of the Box “lambda” for each training set
+```{r}
+for (i in 1992:2006)
+{
+  assign(paste0("tr", i), window(GS, start=i, end=c(2011,12)))
+}
+
+list.L <- c()
+
+for (i in 1992:2006)
+{
+  lsname <- paste0("tr", i)
+  ls <- eval(parse(text=lsname))
+  list.L <- c(list.L, BoxCox.lambda(ls))
+}
+
+list.L
+```
+
+* Obtain an optimized model using all the **ets**-options that you consider pertinent based on your analysis in previous questions.
+
+<span style="color:blue">
+Based on previous questions, I will choose a Holt-Winters model without damping, because it gives the best out-of-sample performance.
+</span>
+
+* Extract the in-sample *RMSE*
+```{r}
+best_model <- c() # model with best starting year
+best_year <- c() # best starting year
+rmse <- c() # list of RMSEs
+
+for (i in 1992:2006)
+{
+  expr.name <- paste0("ets(tr", i,", model = 'AAZ', damped = FALSE)")
+  model <- eval(parse(text=expr.name))
+  rmse <- c(rmse,sqrt(model$mse))
+  if (length(best_model)==0)
+  {
+    best_model <- model
+    best_year <- i
+  } else
+  {
+    if (sqrt(best_model$mse) > sqrt(model$mse))
+    {
+      best_model <- model
+      best_year <- i
+    }
+  }
+}
+
+rmse
+```
+
+* Based on *RMSE*, select the best starting year for the training set
+```{r}
+best_year
+```
+
+
+* Report the lowest *RMSE* and the starting year the generates it
+```{r}
+paste("Lowest RMSE:", min(rmse))
+paste("Starting Year:", best_year)
+```
+
+
+* Create a “reduced”  training set starting the year you identified above, and terminating in December of 2011.  Name this reduced training set **trr**.
+```{r}
+trr <- window(GS, start=best_year, end=c(2011,12))
+```
+
+
+*	Explain why we cannot use the *AIC, AICc* or *BIC* criteria to select the best starting year for the training data set.
+
+<span style="color:blue">
+For AIC/AICc/BIC, we generally compare the relative values of each criterion on different models with the same data. However in this case, we are looking at different durations for the training set, thus AIC/AICc/BIC will not be appropriate.
+</span>
+
+
+7.	(5 pts) Fitting a model on the reduced training dataset:
+
+*	Figure out the best value of the BoxCox "*lambda*" value for the reduced training data set **trr**, and fit the best *ETS* model to this data. Report the model parameters and metrics. Name this model **f**.  
+```{r}
+L <- BoxCox.lambda(trr)
+f <- ets(trr, model="ZZZ", restrict=FALSE, lambda=L)
+summary(f)
+```
+
+
+*	Obtain a 72-month-ahead forecast, name this forecast **fc** and plot it.
+```{r}
+fc <- f %>% forecast(h=72)
+
+fc %>%
+  autoplot()+
+  xlim(2009, 2018)+
+  autolayer(te, series="Actual Sales")
+```
+
+
+*	Calculate the *in-sample* and *out-of-sample* fit statistics of the **fc** forecast.
+```{r}
+accuracy(fc, te)
+```
+
+
+* Is the in-sample *AICc* for model **f.O** comparable with the in-sample *AICc* for model **f**?  Explain.  
+<span style="color:blue">
+No, because f.0 uses training data starting from the year 1992, and f uses training data starting from 2003. The models are running on different data.
+</span>
+
+*	Is the in-sample *MASE* for model **f.O** comparable with the in-sample *MASE* for model **f**?  Explain.  
+<span style="color:blue">
+Yes, because the end date of the training sets used for f.0 and f are the same, which gives them the same naive forecast, and MASE compares the MAE of f.0 and f to the naive forecast. 
+</span>
+
+*	Is the *out-of-sample RMSE* for forecast **fc.O** comparable with the *out-of-sample RMSE* for forecast **fc**?  Explain.  Is the **fc** forecast truly an *out-of-sample* forecast? Explain.
+<span style="color:blue">
+Yes, because the RMSEs only consider the future values versus the predicted values. However, the fc forecast is not truly an out-of-sample forecast, because for a true out-of-sample forecast, we should use all the data up to today as the training set, and then use actual future values as the test set. This could be time consuming so we sometimes use cross validation instead.
+</span>
+
+
+8.	(5 pts.) Aggregate Sales Forecast for 2018—2022:
+
+* Next we need to prepare a monthly sales forecast through December 2022.  To this end we first set the training set to include all the data starting from the year we selected in Question (6) through December 2017.  Select the *ETS* model you analyzed in Question (7), and fit the best parameters to that model.  Name the resulting model **ff**.  
+```{r}
+tr_ <- window(GS, start=best_year, end=c(2017,12))
+ff <- ets(tr_, model="MAA", restrict=FALSE, lambda=L)
+summary(ff)
+```
+
+
+*	Compare the in-sample accuracy of fit statistics of **ff** with those of model **f**.  
+```{r}
+accuracy(f)
+accuracy(ff)
+```
+<span style="color:blue">
+Model f has a better in-sample performance.
+</span>
+
+*	Obtain a 60-month-ahead forecast, name this forecast **ffc** and plot it (this time do not include the xlim limits on the forecast plot.  
+```{r}
+ffc <- ff %>% forecast(h=60)
+
+ffc %>%
+  autoplot()
+```
+
+
+*	Based on your analysis what would you expect the out-of-sample (i.e., the actual) *MAPE* be over the next five years? Why?
+
+<span style="color:blue">
+I expect the out-of-sample MAPE over the next 5 years to be slightly over 0.9577799, using the training set results as our best guess.
+</span>
+
+* You must plan for the expansion of capacity of your system.  An important input in this process is the national-wide aggregate grocery store sales.  What is the level of nationwide sales that will not be exceeded with a probability of 90%
+```{r}
+ff %>% forecast(h=60, level=90)
+```
+<span style="color:blue">
+Based on the results, the sales amount will not exceed 67849.30 with a probability of 90%.
+</span>

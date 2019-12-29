@@ -1,0 +1,306 @@
+---
+title: 'OM380.17 - MSBA: Assignment #2'
+output:
+  html_document:
+    df_print: paged
+---
+***
+<center> 
+### Forecasting Aggregate Electricity Generation in the US:
+### Seasonal ARIMA Lab.
+#### (Total 40 pts.)
+#### Due: Nov. 20 (before 9:00am)
+</center>
+***
+
+In this assignment we will focus on estimation of electricity generation in the US through December 2022.  We will base our analysis on the monthly data (index) provided by the Federal Reserve in https://fred.stlouisfed.org/series/IPG2211N 
+
+
+```{r message=TRUE, warning=FALSE, paged.print=FALSE}
+library(fpp)
+library(dplyr)
+
+PG <- read.csv("IPG2211N.csv") %>%
+  select(-DATE) %>%
+  ts(start=c(1972,1), frequency=12)
+plot(PG)
+abline(v=c(2005,1), col="gray")
+```
+
+Initially we will set up as training data the series from January 1972 through December 1995, and the testing set as the data from January 1996 through December 2000.  First we will analyze the data during the growth period. To maintain consistency across the class, please execute the following two command to generate the training and testing data sets as indicated:
+
+```{r}
+PG1.tr <- window(PG, end=c(1995,12))
+PG1.te <- window(PG, start=c(1996,1), end=c(2000,12))
+```
+
+####1.	(5 pts.) Preliminary analysis of training data:
+*	Obtain the Box-Cox transformation parameter lambda for the training set PG1.tr
+```{r}
+L = BoxCox.lambda(PG1.tr)
+```
+
+*	Use the **ggtsdisplay(…, lag=48)** function to examine *ACF* and *PACF* of the Box-Cox transformed series with a non-seasonal difference.  Do the differenced and transformed series look stationary?
+```{r}
+z1 <- PG1.tr %>% BoxCox(L) %>% diff() 
+ggtsdisplay(z1, lag=48)
+```
+
+<span style="color:blue">
+The series does not look stationary. There still seems to be a seasonal component according to the ACF.
+</span>
+
+*	Use the **ggtsdisplay(…, lag=48)** function to examine *ACF* and *PACF* of the Box-Cox transformed series with a seasonal difference.  Do the differenced and transformed series look stationary?
+```{r}
+z2 <- PG1.tr %>% BoxCox(L) %>% diff(lag=12)
+ggtsdisplay(z2, lag=48)
+```
+
+<span style="color:blue">
+The series does not look stationary. There still seems to be a trend component according to the PACF.
+</span>
+
+*	Use the **ggtsdisplay(…, lag=48)** function to examine *ACF* and *PACF* of the Box-Cox transformed series with both a seasonal difference and a non-seasonal difference.  Do the differenced and transformed series look stationary?
+```{r}
+z3 <- PG1.tr %>% BoxCox(L) %>% diff(lag=12) %>% diff() 
+ggtsdisplay(z3, lag=48)
+```
+
+<span style="color:blue">
+The series looks stationary.
+</span>
+
+*	Run the **adf.test(…)** on the above series.  What do you conclude from the test?
+```{r}
+adf.test(z3, alternative='s')
+```
+
+<span style="color:blue">
+The test rejects H0, so the time series is stationary. 
+</span>
+
+*	If you were to fit an *ARIMA* model to each of the (three) differenced series you obtained above, what would be the maximum order of the $(p,d,q) (P,D,Q)_{12}$  model in each case? (i.e., what is the maximum values of $p,P,q$  and $Q$ for each of the value combinations of $d$ and $D$?) 
+
+<span style="color:blue">
+z1: d=1, D=0
+fit $(2,1,1) (0,0,1)_{12}$
+z2: d=0, D=1
+fit $(2,0,1) (0,1,1)_{12}$
+z3: d=1, D=1
+fit $(4,1,1) (2,1,1)_{12}$
+</span>
+
+
+####2.	(5 pts.) Automatic ARIMA model selection:
+
+*	Run the **auto.arima(…)** function to fit an ARIMA model on the Box-Cox transformation of the PG1.tr dataset, and report the order of the model, the value of the model parameters and the value of the AICc and BIC information criteria.
+```{r}
+fit.G = PG1.tr %>% BoxCox(L) %>% auto.arima()
+fit.G
+```
+
+
+*	Use the **checkresiduals(...)** function to assess the validity of the model you obtained in Question 1.  Based on the results you obtained comment on the validity of the model.
+```{r}
+checkresiduals(fit.G)
+```
+
+<span style="color:blue">
+The residuals appear to be white noise, and the Ljung-Box test shows that there are no more remaining autocorrelations.
+</span>
+
+*	Use the **forecast(…)** function to prepare a 60 month-ahead (5-year) forecast for the electricity generation and then overlay the actual data for electricity generation.  
+```{r}
+autoplot(forecast(fit.G, h=60)) +
+    autolayer(PG1.te %>% BoxCox(L), series = 'Actual Electricity')
+```
+
+*	Use the **accuracy(…)** function to obtain the training and testing fit (PG1.te) metrics for the model obtained. Based on the visual inspection of the forecast plot and the out-of-sample fit statistics comment on the forecast bias. 
+```{r}
+fc.G = fit.G %>% forecast(h=60)
+accuracy(fc.G, PG1.te %>% BoxCox(L))
+```
+
+<span style="color:blue">
+Forecast seems quite accurate with a low MASE.
+</span>
+
+
+####3.	 (5 pts.) Manual Model Selection on $(p,0,q) (P,1,Q)_{12}$:
+
+*	Search manually for a model on the seasonally differenced series to improve on the automatic selection in Question 2.  To limit your manual search do not exceed the maximum values of $p,q,P$ and $Q$ that you identified in Question 1.
+
+<span style="color:blue">
+Using manual search, it seems that $(4,1,0) (0,1,1)_{12}$ gives better results than the automatic solution.
+</span>
+
+```{r}
+fit.G2 = PG1.tr %>% BoxCox(L) %>% Arima(order=c(4,0,0), seasonal=c(0,1,1))
+fit.G2
+```
+
+*	Report on the best model that you identified in each case and comment on its *AIC*, *AICc* and *BIC*.  How do your model compares with the one found by **auto.arima(…)**?
+```{r}
+summary(fit.G)
+summary(fit.G2)
+```
+
+<span style="color:blue">
+The model found using auto arima is better because its AIC, AICc, and BIC are lower.
+</span>
+
+####4.	(5 pts.) Manual Model Selection on $(p,1,q) (P,0,Q)_{12}$:
+
+*	Search manually for a model on the once-differenced series to improve on the automatic selection in Question 2.  To limit your manual search do not exceed the maximum values of $p,q,P$ and $Q$ that you identified in Question 1.
+
+<span style="color:blue">
+Using manual search, it seems that $(4,1,0) (0,1,1)_{12}$ gives better results than the automatic solution.
+</span>
+
+```{r}
+fit.G3 <- PG1.tr %>% BoxCox(L) %>% diff() %>% Arima(order=c(4,1,0), seasonal=c(0,0,1)) 
+fit.G3
+```
+
+*	Report on the best model that you identified in each case and comment on its  *AIC*, *AICc* and *BIC*.  How do your model compares with the ones found in Questions 2 and 3?
+```{r}
+summary(fit.G)
+summary(fit.G3)
+```
+
+<span style="color:blue">
+The model found with manual search is better because its AICc is lower.
+</span>
+
+####5.	(5 pts.) ARIMA model for the expanded training set:
+
+*	No we redefine the training and testing sets as follows:
+
+```{r}
+PG2.tr <- window(PG, end=c(2011,12))
+```
+
+*	Obtain the Box-Cox transformation parameter lambda for the training set **PG2.tr**
+```{r}
+L2 <- BoxCox.lambda(PG2.tr)
+```
+
+*	Difference the transformed series once at the seasonal and non-seasonal levels (i.e.,$d=1$ and $D=1$) and run the **adf.test(…)** on the resulting series.  What do you conclude from the test?
+```{r}
+z <- PG2.tr %>% BoxCox(L2) %>% diff(lag=12) %>% diff()
+adf.test(z, alternative='stationary')
+```
+
+<span style="color:blue">
+From the test, we reject H0 and conclude that the resulting series is stationary.
+</span>
+
+
+*	If you were to fit an ARIMA model to the time series you obtained above, what would be the maximum order of the $(p,1,q) (P,1,Q)_{12}$  model? (i.e., what is the maximum values of $p,P,q$  and $Q$? )
+```{r}
+tsdisplay(z)
+```
+
+<span style="color:blue">
+Max order of the $(p,1,q) (P,1,Q)_{12}$ is: $(4,1,2) (3,1,2)_{12}$
+</span>
+
+####6.	 (5 pts.) Automatic ARIMA model selection on the expanded dataset:
+
+*	Run the **auto.arima(…)** function to fit an *ARIMA* model on the Box-Cox transformation of the **PG2.tr** dataset, and report the order of the model, the value of the model parameters and the value of the *AIC*, *AICc* and *BIC*?
+```{r}
+fit.G <- PG2.tr %>% BoxCox(L2) %>% auto.arima()
+fit.G
+```
+
+*	Execute the residual diagnostics and comment on the validity of the model.
+```{r}
+checkresiduals(fit.G)
+```
+
+<span style="color:blue">
+The residuals appear to be white noise, and the Ljung-Box test shows that there are no more remaining autocorrelations. So the model appears to be valid.
+</span>
+
+
+####7.	 (5 pts.) Automatic ARIMA model selection with a reduced training dataset:
+
+*	As the patterns of consumption and generation changed substantially on 2005, before setting on a forecasting model we will try reducing the training set to information posterior to 2005.  To this end we define the training data set as follows:
+
+```{r}
+PG3.tr <- window(PG, start=c(2005,1), end=c(2011,12))
+PG3.te <- window(PG, start=c(2012,1), end=c(2017,12))
+```
+
+*	Now run the **auto.arima(…)** function to fit a model on the **PG3.tr** dataset, and report the order of the model, the value of the model parameters, and the values of *AIC*, *AICc* and *BIC*.
+```{r}
+L3 <- BoxCox.lambda(PG3.tr)
+fit.G <- PG3.tr %>% BoxCox(L3) %>% auto.arima()
+fit.G
+```
+
+*	Diagnose the model’s residuals to assess the validity of the model you obtained above.  Based on the results you obtained comment on the validity of the model.
+```{r}
+checkresiduals(fit.G)
+```
+
+<span style="color:blue">
+The model does not appear to be valid, because there still seems to be autocorrelation within the residuals, and the residuals do not appear to be white noise.
+</span>
+
+
+*	Using the **PG3.tr** dataset, try to get a better model than the one obtained by the **auto.arima(…)** function, possibly changing also the number of differences.  Use the information criteria and the validity of the model to select the best model.
+
+<span style="color:blue">
+Using $(0,0,3) (0,1,1)_{12}$, we get a better model than the one from auto.arima
+</span>
+```{r}
+fit.G2 <- PG3.tr %>% BoxCox(L3) %>% Arima(order=c(0,0,3), seasonal=c(0,1,1))
+summary(fit.G)
+summary(fit.G2)
+```
+
+*	For the best model found thus far, prepare a 72 month-ahead forecast for the electricity generation and then overlay the actual data for electricity generation.  
+```{r}
+autoplot(forecast(fit.G2, h=72)) +
+    autolayer(PG3.te %>% BoxCox(L3), series = 'Actual Electricity')
+
+```
+
+*	Based on the visual inspection of the forecast plot and the out-of-sample fit statistics comment on the forecast bias.
+
+<span style="color:blue">
+Forecast seems quite accurate with a low test set MASE.
+</span> 
+ 
+
+####8.	 (5 pts) Forecasting future monthly US electricity generation:
+
+*	Now define the training and testing data set as:
+
+```{r}
+PG.tr <- window(PG, start=c(2005,1), end=c(2017,12))
+PG.te <- window(PG, start=c(2018,1))
+```
+
+*	Use the **Arima(…)** function to fit the best model you have found thus far on PG.tr, run the model diagnostics to test the model validity and use it to extrapolate (forecast) the monthly generation of electricity in the US through the end of 2022 (i.e., forecast 60 months ahead).
+```{r}
+fit.G <- PG.tr %>% Arima(order=c(0,0,3), seasonal=c(0,1,1))
+checkresiduals(fit.G)
+```
+```{r}
+fc <- fit.G %>% forecast(h=60)
+```
+
+
+* Overlay the available data for 2018 over the forecast.  Comment on the model fit and validity.
+```{r}
+autoplot(fc) +
+  autolayer(PG.te, series='Actual Electricity')
+
+accuracy(fc, PG.te)
+```
+
+<span style="color:blue">
+By checking the residuals, the model seems valid because errors are white noise and there doesn't seem to be autocorrelation. However the 2018 forecast is not as good as previous periods.
+</span> 

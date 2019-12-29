@@ -1,0 +1,484 @@
+---
+title: "Team Assignment XG-Boosting"
+output:
+  html_document:
+    df_print: paged
+---
+***
+<center> 
+### Forecasting Point-of-Sale x SKU Demand Using XG-Boosting
+</center>
+***
+
+The objective of this assignment is to provide a hands-on realistic example of a developing a forecasting model to be used for distribution and retailing.
+
+Using a Pareto approach we identified the most important SKUs and Stores in the Chicago market as it pertrains to the retailing of peanut butter. This information is contained in the file "PB Sales Chicago.csv"
+
+```{r}
+library(tidyverse)
+library(fpp2)
+library(xgboost)
+
+#
+# READ DATA, CORRECT DATA TYPES AND CREATE PRICE AND VOLUME VARIABLES
+#
+D <- read_csv("PB Sales Chicago.csv") %>%
+  select(-VEND,-ITEM) %>%
+  mutate(F       = as.factor(F),
+         UPC     = as.factor(UPC),
+         TYPE    = as.factor(TYPE),
+         TEXTURE = as.factor(TEXTURE),
+         FLAVOR  = as.factor(FLAVOR),
+         PPOZ    = (DOLLARS / (UNITS * VOL_EQ * 16)),
+         LPU     = log1p(PPOZ),
+         LSA     = log1p(UNITS * VOL_EQ * 16))
+
+#
+# Hot-One code all dummies
+D <- D %>% 
+  mutate(FAP = ifelse(F=="A+",1,0),
+         FA  = ifelse(F=="A",1,0),
+         FB  = ifelse(F=="B",1,0),
+         FC  = ifelse(F=="C",1,0),
+         TXCM  = ifelse(TEXTURE == "CREAMY",1,0),
+         TXCR  = ifelse(TEXTURE == "CRUNCHY",1,0),
+         TXCRX = ifelse(TEXTURE == "EXTRA CRUNCHY",1,0),
+         TXCH  = ifelse(TEXTURE == "CHUNKY",1,0),
+         TXSCH = ifelse(TEXTURE == "SUPER CHUNKY",1,0),
+         FL    = ifelse(FLAVOR == "REGULAR",1,0),
+         TYPB  = ifelse(TYPE == "PEANUT BUTTER",1,0),
+         TYPBS = ifelse(TYPE == "REANUT BUTTER SPREAD",1,0)) %>%
+select(-F)
+```
+
+#### The variables are as follows:
+
+- IRI_KEY: store identifier
+- F: in-store magazine feature advertising dummy
+- D: in-store display promotion dummy
+
+Following is a simple forecasting model:
+
+```{r}
+DR <- D %>% select(-TYPE, -TEXTURE, -FLAVOR)
+D.tr <- DR %>% filter(WEEK <= 1674)                 # Training Set
+D.te <- DR %>% filter(WEEK >= 1675, WEEK <= 1680)   # Testing Set
+D.v  <- DR %>% filter(WEEK >= 1681)                 # Validation Set
+
+x.tr <- D.tr %>% select(-IRI_KEY, -UPC, - UNITS, - DOLLARS, -LSA) %>% data.matrix()
+x.te <- D.te %>% select(-IRI_KEY, -UPC, - UNITS, - DOLLARS, -LSA) %>% data.matrix()
+x.v <- D.v %>% select(-IRI_KEY, -UPC, - UNITS, - DOLLARS, -LSA) %>% data.matrix()
+y.tr <- D.tr$LSA
+y.te <- D.te$LSA
+y.v  <- D.v$LSA
+
+set.seed(1)
+xb <- xgboost(x.tr, y.tr,
+              learning_rate = .4,
+              lambda = 0.1,
+              max_depth = 8,
+              subsample = 0.7,
+              colsample_bytree = 0.7,
+              colsample_bylevel = 0.7,
+              nround=20)
+
+y_fit <- predict(xb, x.tr)
+y_tst <- predict(xb, x.te)
+mean(abs(y.tr - y_fit)/y.tr)*100
+mean(abs(y.te - y_tst)/y.te)*100
+sqrt(mean((y.te-y_tst)^2))
+
+y_val <- predict(xb, x.v)
+mean(abs(y.v - y_val)/y.v)*100
+sqrt(mean((y.v - y_val)^2))
+```
+
+The script above uses a training set to fit the model; you should use the testing set to decide on the XG-Boosting parameters, and then once these parameters are set, use the validation set to estimate true out-of-sample RMSE and MAPE performance.
+
+#### 1. Fine tune the model parameters and report RMSE and MAPE for training, testing, and validation sets. You will use this model as benchmark for comparison below.
+
+```{r}
+# create hyperparameter grid
+hyper_grid <- expand.grid(
+eta = c(.05, .1, .3, .5),
+max_depth = c(1, 3, 5, 7),
+min_child_weight = c(1, 3, 5, 7),
+subsample = c(.8, 1),
+colsample_bytree = c(.8, .9, 1),
+optimal_trees = 0,               # a place to dump results
+min_RMSE = 0                     # a place to dump results
+)
+```
+
+```{r}
+# grid search
+for(i in 1:nrow(hyper_grid)) {
+# create parameter list
+params <- list(
+eta = hyper_grid$eta[i],
+max_depth = hyper_grid$max_depth[i],
+min_child_weight = hyper_grid$min_child_weight[i],
+subsample = hyper_grid$subsample[i],
+colsample_bytree = hyper_grid$colsample_bytree[i]
+)
+# reproducibility
+set.seed(1)
+# train model
+xgb.tune <- xgb.cv(
+params = params,
+data = x.te,
+label = y.te,
+nrounds = 100,
+nfold = 5,
+objective = "reg:linear",  # for regression models
+verbose = 0,               # silent,
+early_stopping_rounds = 10 # stop if no improvement for 10 consecutive trees
+)
+# add min training error and trees to grid
+hyper_grid$optimal_trees[i] <- which.min(xgb.tune$evaluation_log$test_rmse_mean)
+hyper_grid$min_RMSE[i] <- min(xgb.tune$evaluation_log$test_rmse_mean)
+}
+
+```
+
+```{r}
+hyper_grid %>%
+  dplyr::arrange(min_RMSE) %>%
+  head(10)
+```
+
+```{r}
+# parameter list
+params <- list(
+  eta = 0.3,
+  max_depth = 5,
+  min_child_weight = 3,
+  subsample = 1,
+  colsample_bytree = 0.8
+)
+
+set.seed(1)
+# train final model
+xgb.fit.final <- xgboost(
+  params = params,
+  data = x.te,
+  label = y.te,
+  objective = "reg:linear",
+  nrounds = 97,
+  verbose = 0
+)
+```
+
+```{r}
+y_fit <- predict(xgb.fit.final, x.tr)
+MAPE_train = mean(abs(y.tr - y_fit)/y.tr)*100
+print(paste0("MAPE of train set= ", round(MAPE_train,4)))
+RMES_tr = sqrt(mean((y.tr-y_fit)^2))
+print(paste0("RMSE of train set= ", round(RMES_tr,4)))
+
+y_tst <- predict(xgb.fit.final, x.te)
+MAPE_te = mean(abs(y.te - y_tst)/y.te)*100
+print(paste0("MAPE of test set= ", round(MAPE_te,4)))
+RMES_te=sqrt(mean((y.te-y_tst)^2)) #rmse
+print(paste0("RMSE of test set= ", round(RMES_te,4)))
+
+y_val <- predict(xgb.fit.final, x.v)
+MAPE_va = mean(abs(y.v - y_val)/y.v)*100
+print(paste0("MAPE of validation set= ", round(MAPE_va,4)))
+RMES_va = sqrt(mean((y.v - y_val)^2))
+print(paste0("RMSE of validation set= ", round(RMES_va,4)))
+```
+
+The following script sets a few sub-category wide indicators as additional model features.  We are interested in figuring out what are effective ways to define sub-categories of products whose business decisions may affect demand of each SKU on a store-by-store basis.
+
+```{r}
+SDR1 <- D %>% 
+  group_by(WEEK, IRI_KEY, TYPE) %>%
+  summarize(LAP1 = log1p(mean(PPOZ)),
+            SD1  = sum(D),
+            SPR1= sum(PR))
+
+SDR2 <- D %>% 
+  group_by(WEEK, IRI_KEY, TEXTURE) %>%
+  summarize(LAP2 = log1p(mean(PPOZ)),
+            SD2  = sum(D),
+            SPR2 = sum(PR),
+            SFAP2 = sum(FAP))
+
+SDR3 <- D %>% 
+  group_by(WEEK, IRI_KEY, FLAVOR) %>%
+  summarize(LAP3 = log1p(mean(PPOZ)),
+            SD3  = sum(D),
+            SPR3 = sum(PR))
+
+DR <- D %>% select(IRI_KEY, WEEK, UPC, LPU, PR, FAP, FA, FB, FC, D, VOL_EQ,TYPE, TEXTURE, FLAVOR, LSA )
+DR <- DR %>% 
+  left_join(SDR1, by =c("WEEK","IRI_KEY", "TYPE")) %>%
+  left_join(SDR2, by =c("WEEK","IRI_KEY", "TEXTURE")) %>%
+  left_join(SDR3, by =c("WEEK","IRI_KEY", "FLAVOR"))
+
+```
+
+#### 2. The script above is intended to give you a starting point, please modify it as you see it appropriate and add the sub-category or category-wide features that you consider important to enrich the model.  Report and discuss youd findings.
+
+```{r}
+DR <- DR %>% select(-TYPE, -TEXTURE, -FLAVOR)
+D.tr <- DR %>% filter(WEEK <= 1674)                 # Training Set
+D.te <- DR %>% filter(WEEK >= 1675, WEEK <= 1680)   # Testing Set
+D.v  <- DR %>% filter(WEEK >= 1681)                 # Validation Set
+
+x.tr <- D.tr %>% select(-IRI_KEY, -UPC, -LSA) %>% data.matrix()
+x.te <- D.te %>% select(-IRI_KEY, -UPC, -LSA) %>% data.matrix()
+x.v <- D.v %>% select(-IRI_KEY, -UPC, -LSA) %>% data.matrix()
+y.tr <- D.tr$LSA
+y.te <- D.te$LSA
+y.v  <- D.v$LSA
+```
+
+```{r}
+# create hyperparameter grid
+hyper_grid <- expand.grid(
+eta = c(.05, .1, .3, .5),
+max_depth = c(1, 3, 5, 7),
+min_child_weight = c(1, 3, 5, 7),
+subsample = c(.8, 1),
+colsample_bytree = c(.8, .9, 1),
+optimal_trees = 0,               # a place to dump results
+min_RMSE = 0                     # a place to dump results
+)
+```
+
+```{r}
+# grid search
+for(i in 1:nrow(hyper_grid)) {
+# create parameter list
+params <- list(
+eta = hyper_grid$eta[i],
+max_depth = hyper_grid$max_depth[i],
+min_child_weight = hyper_grid$min_child_weight[i],
+subsample = hyper_grid$subsample[i],
+colsample_bytree = hyper_grid$colsample_bytree[i]
+)
+# reproducibility
+set.seed(1)
+# train model
+xgb.tune <- xgb.cv(
+params = params,
+data = x.te,
+label = y.te,
+nrounds = 100,
+nfold = 5,
+objective = "reg:linear",  # for regression models
+verbose = 0,               # silent,
+early_stopping_rounds = 10 # stop if no improvement for 10 consecutive trees
+)
+# add min training error and trees to grid
+hyper_grid$optimal_trees[i] <- which.min(xgb.tune$evaluation_log$test_rmse_mean)
+hyper_grid$min_RMSE[i] <- min(xgb.tune$evaluation_log$test_rmse_mean)
+}
+```
+
+```{r}
+hyper_grid %>%
+  dplyr::arrange(min_RMSE) %>%
+  head(10)
+```
+
+```{r}
+# parameter list
+params <- list(
+  eta = 0.3,
+  max_depth = 5,
+  min_child_weight = 7,
+  subsample = 1,
+  colsample_bytree = 0.8
+)
+
+set.seed(1)
+# train final model
+xgb.fit.final <- xgboost(
+  params = params,
+  data = x.te,
+  label = y.te,
+  objective = "reg:linear",
+  nrounds = 100,
+  verbose = 0
+)
+```
+
+```{r}
+y_fit <- predict(xgb.fit.final, x.tr)
+MAPE_train = mean(abs(y.tr - y_fit)/y.tr)*100
+print(paste0("MAPE of train set= ", round(MAPE_train,4)))
+RMES_tr = sqrt(mean((y.tr-y_fit)^2))
+print(paste0("RMSE of train set= ", round(RMES_tr,4)))
+
+y_tst <- predict(xgb.fit.final, x.te)
+MAPE_te = mean(abs(y.te - y_tst)/y.te)*100
+print(paste0("MAPE of test set= ", round(MAPE_te,4)))
+RMES_te=sqrt(mean((y.te-y_tst)^2)) #rmse
+print(paste0("RMSE of test set= ", round(RMES_te,4)))
+
+y_val <- predict(xgb.fit.final, x.v)
+MAPE_va = mean(abs(y.v - y_val)/y.v)*100
+print(paste0("MAPE of validation set= ", round(MAPE_va,4)))
+RMES_va = sqrt(mean((y.v - y_val)^2))
+print(paste0("RMSE of validation set= ", round(RMES_va,4)))
+```
+
+```{r}
+# create importance matrix
+importance_matrix <- xgb.importance(model = xgb.fit.final)
+
+# variable importance plot
+xgb.plot.importance(importance_matrix, top_n = 10, measure = "Gain")
+```
+
+Another type of useful model feature is lagged demand information.  The script below creates lagged demand variables.  Add them to the model in Question (2) and test them:
+
+```{r}
+LY <- DR %>% select(IRI_KEY, WEEK, UPC, LSA)
+LDEM <- data.frame(IRI_KEY = NULL, WEEK = NULL, UPC = NULL, LSA=NULL,
+                   Y1 = NULL, Y2 = NULL, Y3 = NULL)
+
+U.Stores <- unique(D$IRI_KEY)
+U.Prods  <- unique(D$UPC)
+
+for(s in U.Stores){
+  for(p in U.Prods){
+    Y <- LY %>% filter(IRI_KEY == s, UPC == p)
+    X <- data.frame(WEEK = 1635:1686)
+    X <- left_join(X,Y, by = "WEEK") %>%
+      mutate(Y1 = lag(LSA),
+             Y2 = lag(LSA,2),
+             Y3 = lag(LSA,3))             
+    LDEM <- rbind(LDEM,X)
+  }
+}
+LDEM <- LDEM %>%
+  select(-LSA)
+
+DL <- D %>% left_join(LDEM, by =c("WEEK", "IRI_KEY", "UPC")) 
+```
+
+#### 3. Next use the script above to supplement your best model thus far with additional lagged demand features, tune the model parameters, report and discuss your findings.
+
+```{r}
+DL <- DL %>% select(-TYPE, -TEXTURE, -FLAVOR)
+DL.tr <- DL %>% filter(WEEK <= 1674)                 # Training Set
+DL.te <- DL %>% filter(WEEK >= 1675, WEEK <= 1680)   # Testing Set
+DL.v  <- DL %>% filter(WEEK >= 1681)                 # Validation Set
+
+xL.tr <- DL.tr %>% select(-IRI_KEY, -UPC, -LSA) %>% data.matrix()
+xL.te <- DL.te %>% select(-IRI_KEY, -UPC, -LSA) %>% data.matrix()
+xL.v <- DL.v %>% select(-IRI_KEY, -UPC, -LSA) %>% data.matrix()
+yL.tr <- DL.tr$LSA
+yL.te <- DL.te$LSA
+yL.v  <- DL.v$LSA
+```
+
+```{r}
+# create hyperparameter grid
+hyper_grid <- expand.grid(
+eta = c(.05, .1, .3, .5),
+max_depth = c(1, 3, 5, 7),
+min_child_weight = c(1, 3, 5, 7),
+subsample = c(.8, 1),
+colsample_bytree = c(.8, .9, 1),
+optimal_trees = 0,               # a place to dump results
+min_RMSE = 0                     # a place to dump results
+)
+```
+
+```{r}
+# grid search
+for(i in 1:nrow(hyper_grid)) {
+# create parameter list
+params <- list(
+eta = hyper_grid$eta[i],
+max_depth = hyper_grid$max_depth[i],
+min_child_weight = hyper_grid$min_child_weight[i],
+subsample = hyper_grid$subsample[i],
+colsample_bytree = hyper_grid$colsample_bytree[i]
+)
+# reproducibility
+set.seed(1)
+# train model
+xgb.tune <- xgb.cv(
+params = params,
+data = xL.te,
+label = yL.te,
+nrounds = 100,
+nfold = 5,
+objective = "reg:linear",  # for regression models
+verbose = 0,               # silent,
+early_stopping_rounds = 10 # stop if no improvement for 10 consecutive trees
+)
+# add min training error and trees to grid
+hyper_grid$optimal_trees[i] <- which.min(xgb.tune$evaluation_log$test_rmse_mean)
+hyper_grid$min_RMSE[i] <- min(xgb.tune$evaluation_log$test_rmse_mean)
+}
+
+```
+
+```{r}
+hyper_grid %>%
+  dplyr::arrange(min_RMSE) %>%
+  head(10)
+```
+
+```{r}
+# parameter list
+params <- list(
+  eta = 0.1,
+  max_depth = 7,
+  min_child_weight = 1,
+  subsample = 1,
+  colsample_bytree = 1
+)
+
+set.seed(1)
+# train final model
+xgb.fit.final <- xgboost(
+  params = params,
+  data = xL.te,
+  label = yL.te,
+  objective = "reg:linear",
+  nrounds = 100,
+  verbose = 0 
+)
+```
+
+```{r}
+y_fit <- predict(xgb.fit.final, xL.tr)
+MAPE_train = mean(abs(yL.tr - y_fit)/yL.tr)*100
+print(paste0("MAPE of train set= ", round(MAPE_train,4)))
+RMES_tr = sqrt(mean((yL.tr-y_fit)^2))
+print(paste0("RMSE of train set= ", round(RMES_tr,4)))
+
+y_tst <- predict(xgb.fit.final, xL.te)
+MAPE_te = mean(abs(yL.te - y_tst)/yL.te)*100
+print(paste0("MAPE of test set= ", round(MAPE_te,4)))
+RMES_te=sqrt(mean((yL.te-y_tst)^2)) #rmse
+print(paste0("RMSE of test set= ", round(RMES_te,4)))
+
+y_val <- predict(xgb.fit.final, xL.v)
+MAPE_va = mean(abs(yL.v - y_val)/yL.v)*100
+print(paste0("MAPE of validation set= ", round(MAPE_va,4)))
+RMES_va = sqrt(mean((yL.v - y_val)^2))
+print(paste0("RMSE of validation set= ", round(RMES_va,4)))
+```
+
+#### 4. Prepare a set of recommendations regarding model features and modeling choices that your team reccommends.
+
+Model features: we choice type, texture, flavor as three categories. Besides categories, three year lags on demand were added to our final model. 
+Modeling choices: eta = 0.1, max_depth = 7, min_child_weight = 1, subsample = 1, colsample_bytree = 1, nrounds = 100. 
+
+Our final model has the above listed features and parameters which produces the lowest test and validation set error among all models we tried. 
+
+[1] "MAPE of train set= 0.3786"
+[1] "RMSE of train set= 0.0324"
+[1] "MAPE of test set= 0.1606"
+[1] "RMSE of test set= 0.0109"
+[1] "MAPE of validation set= 0.3594"
+[1] "RMSE of validation set= 0.04"
