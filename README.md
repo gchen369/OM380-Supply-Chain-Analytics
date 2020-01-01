@@ -5,7 +5,7 @@ Assignments for the 2nd part of UT MSBA's Supply Chain Analytics course, time se
 
  - **Assignment #1:**
  
-    Using ETS models fore longer term forecasts, suitable for aggregate planning and/or facilities planning, using monthly retail sales of grocery stores from FRED. [Retail Sales: Grocery Stores](https://fred.stlouisfed.org/series/MRTSSM4451USN)
+    Using ETS models for longer term forecasts, suitable for aggregate planning and/or facilities planning, using monthly retail sales of grocery stores from FRED. [Retail Sales: Grocery Stores](https://fred.stlouisfed.org/series/MRTSSM4451USN)
 
 
  - **Assignment #2:**
